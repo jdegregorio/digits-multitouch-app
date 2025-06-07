@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Multi-Touch Winner - Phase 3 (Dark Mode)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Make the canvas fill the whole screen and prevent scroll/zoom */
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+      background-color: #000000; /* Changed to black for dark mode */
+      font-family: 'Inter', sans-serif; /* Using Inter font */
+      transition: background-color 1s ease-out; /* Smooth transition for background color */
+    }
+
+    #touchCanvas {
+      display: block;         /* Remove inline display */
+      width: 100vw;
+      height: 100vh;
+      touch-action: none;     /* Disable pinch-zoom, scrolling */
+      border-radius: 0; /* No rounded corners for the full screen canvas */
+    }
+
+    /* Phase 3: Instructions Overlay CSS */
+    #instructions {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-family: sans-serif;
+      font-size: 18px;
+      color: #fff; /* Changed to white for dark mode */
+      opacity: 0.5;
+      text-align: center;
+      pointer-events: none; /* Allow touches to pass through the div to the canvas */
+      transition: opacity 0.4s ease-in; /* Smooth transition for hiding/showing */
+      padding: 10px 20px; /* Add some padding */
+      background-color: rgba(0, 0, 0, 0.7); /* Slightly translucent dark background */
+      border-radius: 10px; /* Rounded corners for the instructions box */
+      box-shadow: 0 4px 6px rgba(255, 255, 255, 0.1); /* Subtle shadow for dark mode */
+      z-index: 5; /* Below winner text, above canvas */
+    }
+
+    #instructions.hidden {
+      opacity: 0;
+    }
+
+    /* New: Winner Text Overlay CSS */
+    #winnerText {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) scale(0.8); /* Start slightly scaled down */
+      font-family: 'Inter', sans-serif;
+      font-size: 120px; /* Very large font for impact */
+      font-weight: 900; /* Extra bold */
+      /* color will be set by JS dynamically */
+      text-shadow: 0 0 20px rgba(255, 255, 255, 0.8), 0 0 40px rgba(255, 255, 255, 0.5); /* Stronger glow, color will be dynamic */
+      opacity: 0; /* Initially hidden */
+      pointer-events: none;
+      transition: opacity 0.5s ease-out, transform 0.5s ease-out; /* Smooth animation */
+      z-index: 15; /* Above everything else */
+      white-space: nowrap; /* Prevent text wrapping */
+    }
+    #winnerText.show {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1); /* Scale up to normal size */
+    }
+  </style>
+</head>
+<body class="flex items-center justify-center min-h-screen bg-black">
+  <canvas id="touchCanvas"></canvas>
+
+  <div id="instructions">Place one or more fingers on screen to play</div>
+  <div id="winnerText">WINNER!</div> <!-- New: Winner Text Element -->
+
+  <script>
+    // PWA Manifest and Service Worker Registration
+    // This section dynamically creates the manifest and registers the service worker.
+
+    // 1. Web App Manifest Creation
+    const manifestContent = {
+      "name": "Multi-Touch Winner",
+      "short_name": "Winner Picker",
+      "start_url": "./", // The root path, where your HTML file is served
+      "display": "fullscreen", // Makes the app run in full screen without browser UI
+      "background_color": "#000000",
+      "theme_color": "#000000",
+      "description": "A fun multi-touch app to pick a winner with dynamic animations.",
+      "icons": [
+        {
+          "src": "https://placehold.co/192x192/000/fff?text=ICON", // Placeholder icon 1
+          "sizes": "192x192",
+          "type": "image/png"
+        },
+        {
+          "src": "https://placehold.co/512x512/000/fff?text=ICON", // Placeholder icon 2
+          "sizes": "512x512",
+          "type": "image/png"
+        }
+      ]
+    };
+
+    const stringifiedManifest = JSON.stringify(manifestContent);
+    const manifestBlob = new Blob([stringifiedManifest], {type: 'application/json'});
+    const manifestUrl = URL.createObjectURL(manifestBlob);
+
+    const linkElem = document.createElement('link');
+    linkElem.rel = 'manifest';
+    linkElem.href = manifestUrl;
+    document.head.appendChild(linkElem);
+
+    // 2. Service Worker Registration
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        const serviceWorkerCode = `
+          const CACHE_NAME = 'multi-touch-winner-v1';
+          const urlsToCache = [
+            './', // The main HTML file (this page)
+            // Add other assets if they were separate files (e.g., 'style.css', 'script.js')
+            // For a single HTML file, caching '/' is usually sufficient.
+          ];
+
+          self.addEventListener('install', (event) => {
+            console.log('[Service Worker] Installing...');
+            event.waitUntil(
+              caches.open(CACHE_NAME)
+                .then((cache) => {
+                  console.log('[Service Worker] Opened cache, caching assets.');
+                  return cache.addAll(urlsToCache).catch(error => {
+                    console.error('[Service Worker] Failed to cache:', error);
+                  });
+                })
+            );
+          });
+
+          self.addEventListener('fetch', (event) => {
+            event.respondWith(
+              caches.match(event.request)
+                .then((response) => {
+                  // Cache hit - return response
+                  if (response) {
+                    // console.log('[Service Worker] Serving from cache:', event.request.url);
+                    return response;
+                  }
+                  // No cache hit - fetch from network
+                  // console.log('[Service Worker] Fetching from network:', event.request.url);
+                  return fetch(event.request);
+                })
+            );
+          });
+
+          self.addEventListener('activate', (event) => {
+            console.log('[Service Worker] Activating...');
+            event.waitUntil(
+              caches.keys().then((cacheNames) => {
+                return Promise.all(
+                  cacheNames.map((cacheName) => {
+                    if (cacheName !== CACHE_NAME) {
+                      console.log('[Service Worker] Deleting old cache:', cacheName);
+                      return caches.delete(cacheName);
+                    }
+                  })
+                );
+              })
+            );
+            console.log('[Service Worker] Activated.');
+          });
+        `;
+
+        const serviceWorkerBlob = new Blob([serviceWorkerCode], {type: 'application/javascript'});
+        const serviceWorkerUrl = URL.createObjectURL(serviceWorkerBlob);
+
+        navigator.serviceWorker.register(serviceWorkerUrl).then((registration) => {
+          console.log('Service Worker registered with scope:', registration.scope);
+        }).catch((error) => {
+          console.error('Service Worker registration failed:', error);
+        });
+      });
+    }
+
+    // --- End PWA setup ---
+
+    // PHASE 3: Polish, Concentric Designs & On-Screen Instructions (with Dark Mode & Curated Colors)
+    // ENHANCEMENT: Firework explosion spiral swirl winner animation, with persistent winner circle.
+    // NEW: Visual circular countdown timer on each finger with improved contrast.
+    // NEW: Stylized trails/traces for each circle.
+    // NEW: Prominent "WINNER!" text and confetti effect.
+    // NEW: Background fades to a muted winner color (less muted).
+    // NEW: Winner text matches winner circle color.
+
+    // 1. Setup canvas
+    const canvas = document.getElementById('touchCanvas');
+    const ctx = canvas.getContext('2d');
+    const body = document.body; // Reference to the body element for background color change
+
+    // 2. Resize canvas to full window size
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas(); // Initial resize
+
+    // 3. Data model: Track active touches → circles
+    class TouchBadge {
+      constructor(id, x, y, baseColor) {
+        this.id = id;         // Touch.identifier (unique for each finger)
+        this.x = x;           // X position of finger
+        this.y = y;           // Y position of finger
+        this.baseColor = baseColor; // e.g. "hsl(123, 70%, 50%)"
+        this.alpha = 1;       // Opacity for fading (Phase 2)
+        this.scale = 1;       // Scale for pulsing (Phase 2)
+        this.rotation = 0;    // Added for winner animation (Phase 3 enhancement)
+        this.timerProgress = 1; // New: Progress for the visual countdown (1 = full, 0 = empty)
+        this.trail = [];      // New: Array to store trail points
+        this.maxTrailLength = 50; // Increased: Max number of points in the trail for longer trails
+      }
+
+      // Getters for concentric ring colors, adjusted for better contrast on dark mode
+      get innerColor() {
+        const matches = this.baseColor.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
+        if (matches) {
+          const h = parseInt(matches[1]);
+          const s = parseInt(matches[2]);
+          const l = parseInt(matches[3]);
+          // Inner circle: slightly darker, more saturated for depth
+          return `hsla(${h}, ${s + 15}%, ${l - 10}%, ${this.alpha})`;
+        }
+        return `hsla(0, 0%, 0%, ${this.alpha})`; // Fallback
+      }
+
+      get outerColor() {
+        const matches = this.baseColor.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
+        if (matches) {
+          const h = parseInt(matches[1]);
+          const s = parseInt(matches[2]);
+          const l = parseInt(matches[3]);
+          // Outer circle: slightly lighter, less saturated for a softer edge
+          return `hsla(${h}, ${s - 15}%, ${l + 10}%, ${this.alpha})`;
+        }
+        return `hsla(0, 0%, 0%, ${this.alpha})`; // Fallback
+      }
+
+      get ringColor() {
+        const matches = this.baseColor.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
+        if (matches) {
+          const h = parseInt(matches[1]);
+          const s = parseInt(matches[2]);
+          const l = parseInt(matches[3]);
+          // Ring: base color with reduced opacity for a subtle border
+          return `hsla(${h}, ${s}%, ${l}%, ${this.alpha * 0.6})`;
+        }
+        return `hsla(0, 0%, 0%, ${this.alpha * 0.6})`; // Fallback
+      }
+    }
+
+    // New Particle class for the explosion effect (modified for spiral swirl)
+    class Particle {
+      constructor(x, y, color, initialAngle, speed, angularDrift) {
+        this.x = x;
+        this.y = y;
+        this.initialAngle = initialAngle;
+        this.speed = speed;
+        this.angularDrift = angularDrift; // How much the angle changes per frame for spiral
+        this.color = color;
+        this.alpha = 1; // Opacity
+        this.size = 5; // Initial size of the particle
+        this.lifetime = 60; // How many frames the particle lives
+        this.age = 0; // Current age of the particle
+        this.currentAngle = initialAngle; // Tracks the particle's current angle for movement
+      }
+
+      update() {
+        // Update current angle based on angular drift
+        this.currentAngle += this.angularDrift;
+
+        // Calculate velocity components based on current angle and speed
+        this.vx = Math.cos(this.currentAngle) * this.speed;
+        this.vy = Math.sin(this.currentAngle) * this.speed;
+
+        this.x += this.vx;
+        this.y += this.vy;
+        this.alpha = 1 - (this.age / this.lifetime); // Fade out over lifetime
+        this.size = 5 * (1 - (this.age / this.lifetime)); // Shrink over lifetime
+        this.age++;
+        return this.age < this.lifetime; // Return true if still alive
+      }
+
+      draw(ctx) {
+        ctx.beginPath();
+        ctx.fillStyle = `hsla(${this.color.substring(4, this.color.length - 1)}, ${this.alpha})`;
+        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // New ConfettiParticle class
+    class ConfettiParticle {
+      constructor(x, y, color) {
+        this.x = x;
+        this.y = y;
+        this.size = Math.random() * 8 + 4; // Random size between 4 and 12
+        this.color = color;
+        this.alpha = 1;
+        this.vx = (Math.random() - 0.5) * 10; // Random horizontal velocity
+        this.vy = (Math.random() - 0.5) * 10 - 5; // Random vertical velocity (slight upward initial kick)
+        this.gravity = 0.3; // Downward pull
+        this.rotation = Math.random() * Math.PI * 2; // Initial random rotation
+        this.rotationSpeed = (Math.random() - 0.5) * 0.2; // Random rotation speed
+        this.lifetime = 120; // Longer lifetime for confetti
+        this.age = 0;
+      }
+
+      update() {
+        this.vx *= 0.98; // Air resistance
+        this.vy += this.gravity; // Apply gravity
+        this.x += this.vx;
+        this.y += this.vy;
+        this.rotation += this.rotationSpeed;
+        this.alpha = 1 - (this.age / this.lifetime);
+        this.age++;
+        return this.age < this.lifetime && this.y < canvas.height + this.size; // Stay alive until off screen
+      }
+
+      draw(ctx) {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.rotation);
+        ctx.fillStyle = `hsla(${this.color.substring(4, this.color.length - 1)}, ${this.alpha})`;
+        // Draw a square for confetti
+        ctx.fillRect(-this.size / 2, -this.size / 2, this.size, this.size);
+        ctx.restore();
+      }
+    }
+
+
+    // Map: touchId → TouchBadge to keep track of all active touches
+    const activeBadges = new Map();
+
+    // Curated color palette to ensure distinct and nice-looking colors
+    const colorPalette = [
+      "hsl(0, 80%, 65%)",    // Vibrant Red
+      "hsl(60, 80%, 65%)",   // Vibrant Yellow
+      "hsl(120, 80%, 65%)",  // Vibrant Green
+      "hsl(180, 80%, 65%)",  // Vibrant Cyan
+      "hsl(240, 80%, 65%)",  // Vibrant Blue
+      "hsl(300, 80%, 65%)",  // Vibrant Magenta
+      "hsl(30, 80%, 65%)",   // Vibrant Orange
+      "hsl(270, 80%, 65%)"   // Vibrant Purple
+    ];
+    let currentColorIndex = 0; // Index to cycle through the palette
+
+    // Function to get the next color from the curated palette
+    function getNextColor() {
+      const color = colorPalette[currentColorIndex];
+      currentColorIndex = (currentColorIndex + 1) % colorPalette.length; // Cycle through colors
+      return color;
+    }
+
+    // Phase 2: Timer and Winner Selection Variables
+    let selectionTimer = null;
+    const TIMEOUT_MS = 4000; // 4 seconds countdown
+    let winnerId = null;
+    let isSelecting = false; // Flag to prevent new touches from interfering during selection
+    let winnerBaseColor = null; // New: To store the winner's base color for background fade
+
+    // Phase 3: Instructions overlay variables
+    const instr = document.getElementById('instructions');
+    let instructionsVisible = true;
+
+    // Global array to hold active explosion particles
+    let explosionParticles = [];
+    let particleAnimationId = null; // To manage the particle animation loop frame ID
+
+    // New: Confetti particles array
+    let confettiParticles = [];
+
+    // New: Visual Countdown Loop variables
+    let visualCountdownLoopId = null;
+    let timerStartTime = 0; // To store the time when the timer was reset for visual countdown
+
+    // New: Winner Text element
+    const winnerTextDiv = document.getElementById('winnerText');
+
+
+    // Phase 2: Timer functions
+    function resetSelectionTimer() {
+      // Clear any existing timer
+      if (selectionTimer) {
+        clearTimeout(selectionTimer);
+      }
+      // Set a new timer
+      selectionTimer = setTimeout(() => {
+        selectionTimer = null; // Clear the timer reference once it fires
+        selectWinner(); // Call winner selection after timeout
+      }, TIMEOUT_MS);
+
+      // New: Start visual countdown
+      activeBadges.forEach(badge => badge.timerProgress = 1); // Reset progress visually for all active badges
+      startVisualCountdownLoop(); // Start the visual countdown animation
+    }
+
+    // New: Visual Countdown Animation Loop
+    function startVisualCountdownLoop() {
+      if (visualCountdownLoopId) {
+        cancelAnimationFrame(visualCountdownLoopId);
+      }
+      timerStartTime = performance.now(); // Ensure timerStartTime is correctly set
+      visualCountdownLoopId = requestAnimationFrame(animateVisualCountdown);
+    }
+
+    function animateVisualCountdown(currentTime) {
+      // Stop if main selection timer is cleared or no badges are active
+      if (!selectionTimer && activeBadges.size === 0) {
+        cancelAnimationFrame(visualCountdownLoopId);
+        visualCountdownLoopId = null;
+        activeBadges.forEach(badge => badge.timerProgress = 0); // Reset progress visually
+        drawAllBadges(); // Final redraw
+        return;
+      }
+
+      const elapsed = currentTime - timerStartTime;
+      const progress = Math.min(elapsed / TIMEOUT_MS, 1); // Progress from 0 to 1
+
+      activeBadges.forEach(badge => {
+        badge.timerProgress = 1 - progress; // Progress bar fills up as time runs out
+      });
+
+      drawAllBadges(); // Redraw all elements with updated progress
+
+      if (progress < 1) {
+        visualCountdownLoopId = requestAnimationFrame(animateVisualCountdown);
+      } else {
+        // Timer has reached 0, selection will occur, so stop this loop
+        cancelAnimationFrame(visualCountdownLoopId);
+        visualCountdownLoopId = null;
+        activeBadges.forEach(badge => badge.timerProgress = 0); // Hide progress bar
+        drawAllBadges(); // Final redraw
+      }
+    }
+
+    // Phase 2: Winner selection logic
+    function selectWinner() {
+      // Do nothing if no badges or if a selection is already in progress
+      if (activeBadges.size === 0 || isSelecting) return;
+
+      isSelecting = true;
+
+      const badges = Array.from(activeBadges.values());
+      // Randomly choose a winner from the active badges
+      const choice = badges[Math.floor(Math.random() * badges.length)];
+      winnerId = choice.id; // Store the ID of the winner
+      winnerBaseColor = choice.baseColor; // Store winner's base color
+
+      fadeOutLosers(); // Start fading out non-winners
+
+      // After losers have faded out, start the winner animation (pulse and particles)
+      setTimeout(() => {
+        pulseWinner(); // This will now also trigger the particle explosion
+        triggerConfetti(choice.x, choice.y); // Trigger confetti at winner's position
+        showWinnerText(winnerBaseColor); // Pass winner's color to showWinnerText
+      }, 250); // Small delay to allow fade to start
+
+      // Hide visual timer when winner is selected
+      if (visualCountdownLoopId) {
+          cancelAnimationFrame(visualCountdownLoopId);
+          visualCountdownLoopId = null;
+          activeBadges.forEach(badge => badge.timerProgress = 0); // Reset progress visually
+          drawAllBadges(); // Ensure final redraw
+      }
+    }
+
+    // New: Show Winner Text (updated to accept color)
+    function showWinnerText(color) {
+        winnerTextDiv.textContent = "WINNER!"; // Set text content
+        winnerTextDiv.style.color = color; // Set text color to winner's base color
+        // Adjust text shadow to match the winner's color
+        const matches = color.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
+        if (matches) {
+            const h = parseInt(matches[1]);
+            const s = parseInt(matches[2]);
+            const l = parseInt(matches[3]);
+            // Use winner's color for text shadow for a more cohesive look
+            winnerTextDiv.style.textShadow = `0 0 20px hsla(${h}, ${s}%, ${l}%, 0.8), 0 0 40px hsla(${h}, ${s}%, ${l}%, 0.5)`;
+        } else {
+            winnerTextDiv.style.textShadow = `0 0 20px rgba(255, 255, 255, 0.8), 0 0 40px rgba(255, 255, 255, 0.5)`; // Fallback
+        }
+
+        winnerTextDiv.classList.add('show'); //
