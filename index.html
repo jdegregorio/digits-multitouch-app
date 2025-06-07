@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="manifest" href="manifest.json">
   <title>Multi-Touch Winner - Phase 3 (Dark Mode)</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- <script src="https://cdn.tailwindcss.com"></script> -->
   <style>
     /* Make the canvas fill the whole screen and prevent scroll/zoom */
     html, body {
@@ -84,14 +84,17 @@
     // This section dynamically creates the manifest and registers the service worker.
 
     // 2. Service Worker Registration
-    if ('serviceWorker' in navigator) {
+    /* if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('./sw.js').then((registration) => { console.log('Service Worker registered with scope:', registration.scope); }).catch((error) => { console.error('Service Worker registration failed:', error); });
       });
-    }
+    } */
 
     // --- End PWA setup ---
 
+    console.log("Main script block started");
+    document.body.style.backgroundColor = 'red';
+    setTimeout(() => { document.body.style.backgroundColor = '#000000'; }, 500);
     // PHASE 3: Polish, Concentric Designs & On-Screen Instructions (with Dark Mode & Curated Colors)
     // ENHANCEMENT: Firework explosion spiral swirl winner animation, with persistent winner circle.
     // NEW: Visual circular countdown timer on each finger with improved contrast.
@@ -398,4 +401,392 @@
             winnerTextDiv.style.textShadow = `0 0 20px rgba(255, 255, 255, 0.8), 0 0 40px rgba(255, 255, 255, 0.5)`; // Fallback
         }
 
-        winnerTextDiv.classList.add('show'); //
+        winnerTextDiv.classList.add('show'); // Make it visible with animation
+    }
+
+    // New: Hide Winner Text
+    function hideWinnerText() {
+        winnerTextDiv.classList.remove('show');
+    }
+
+
+    // Phase 3 Enhancement: Firework-like particle explosion (modified for spiral swirl)
+    function triggerParticleExplosion(x, y, color) {
+        const numberOfParticles = 100; // More particles for a bigger effect
+        const speed = 3; // Base speed of particles
+        const angularDriftVariance = 0.02; // How much particles deviate for spiral
+
+        for (let i = 0; i < numberOfParticles; i++) {
+            const initialAngle = (i / numberOfParticles) * Math.PI * 2; // Distribute particles in a circle
+            // Introduce variance in speed and angular drift for a more natural look
+            const particleSpeed = speed * (0.5 + Math.random());
+            const angularDrift = (Math.random() - 0.5) * angularDriftVariance * 2;
+            explosionParticles.push(new Particle(x, y, color, initialAngle, particleSpeed, angularDrift));
+        }
+
+        // Start the particle animation loop if it's not already running
+        if (!particleAnimationId) {
+            particleAnimationId = requestAnimationFrame(animateParticles);
+        }
+    }
+
+    // New: Confetti effect
+    function triggerConfetti(x, y) {
+        const numberOfConfetti = 150; // Lots of confetti
+        const winnerBadge = activeBadges.get(winnerId);
+        const confettiColor = winnerBadge ? winnerBadge.baseColor : "hsl(0, 0%, 100%)"; // Use winner's color or white
+
+        for (let i = 0; i < numberOfConfetti; i++) {
+            confettiParticles.push(new ConfettiParticle(x, y, confettiColor));
+        }
+        // Start confetti animation loop if not already running (similar to particles)
+        if (!particleAnimationId) { // Can potentially share the animation loop if performance allows
+            particleAnimationId = requestAnimationFrame(animateParticles); // Re-use particle loop for confetti
+        }
+    }
+
+    // Modify animateParticles to also draw confetti
+    function animateParticles(currentTime) { // Renamed for clarity as it handles both
+        // Filter out dead particles and update live ones
+        explosionParticles = explosionParticles.filter(p => p.update());
+        confettiParticles = confettiParticles.filter(c => c.update());
+
+
+        // Redraw all badges and then particles on top
+        drawAllBadges(); // Clear and redraw badges first
+        explosionParticles.forEach(p => p.draw(ctx)); // Draw active particles
+        confettiParticles.forEach(c => c.draw(ctx)); // Draw active confetti
+
+        if (explosionParticles.length > 0 || confettiParticles.length > 0) {
+            particleAnimationId = requestAnimationFrame(animateParticles);
+        } else {
+            cancelAnimationFrame(particleAnimationId);
+            particleAnimationId = null; // Clear the ID
+        }
+    }
+
+
+    // 4. Touch event handlers (Phase 1, 2, 3 updates)
+    function handleTouchStart(event) {
+        event.preventDefault(); // Prevent default touch actions (like scrolling or zooming)
+
+        // Hide instructions on first touch
+        if (instructionsVisible) {
+            instr.classList.add('hidden');
+            instructionsVisible = false;
+        }
+
+        // If a winner is already selected, and we are not in the process of fading out losers
+        if (winnerId !== null && !isSelecting) {
+            resetGame(); // Reset the game on new touch after a winner has been decided
+        }
+
+        // If selection is in progress (losers fading), ignore new touches
+        if (isSelecting) return;
+
+        const touches = event.changedTouches;
+        for (let i = 0; i < touches.length; i++) {
+            const touch = touches[i];
+            const newBadge = new TouchBadge(touch.identifier, touch.clientX, touch.clientY, getNextColor());
+            activeBadges.set(touch.identifier, newBadge);
+        }
+
+        // Reset timer only if there are active badges and no winner is currently selected
+        if (activeBadges.size > 0 && winnerId === null) {
+            resetSelectionTimer();
+        }
+        drawAllBadges(); // Initial draw for new badges
+    }
+
+    function handleTouchMove(event) {
+        event.preventDefault();
+        if (isSelecting) return; // Ignore moves if selection is happening
+
+        const touches = event.changedTouches;
+        for (let i = 0; i < touches.length; i++) {
+            const touch = touches[i];
+            const badge = activeBadges.get(touch.identifier);
+            if (badge) {
+                badge.x = touch.clientX;
+                badge.y = touch.clientY;
+                // New: Add current position to the trail
+                badge.trail.push({x: badge.x, y: badge.y, alpha: badge.alpha * 0.7}); // Store with current alpha for fade
+                if (badge.trail.length > badge.maxTrailLength) {
+                    badge.trail.shift(); // Keep trail length manageable
+                }
+            }
+        }
+        // No need to reset timer on move, only on start/end
+        // drawAllBadges(); // Redraw moved badges - this is handled by the animation loop now
+    }
+
+    function handleTouchEnd(event) {
+        event.preventDefault();
+        if (isSelecting) return; // Ignore if selection is happening (unless it's the winner being removed)
+
+        const touches = event.changedTouches;
+        for (let i = 0; i < touches.length; i++) {
+            const touch = touches[i];
+            activeBadges.delete(touch.identifier);
+        }
+
+        if (activeBadges.size === 0) {
+            // All fingers lifted, clear timer and stop visual countdown
+            if (selectionTimer) {
+                clearTimeout(selectionTimer);
+                selectionTimer = null;
+            }
+            if (visualCountdownLoopId) {
+                cancelAnimationFrame(visualCountdownLoopId);
+                visualCountdownLoopId = null;
+            }
+            // If no fingers left, and no winner was chosen, show instructions again
+            if (winnerId === null && !instructionsVisible) {
+                instr.classList.remove('hidden');
+                instructionsVisible = true;
+            }
+        } else if (winnerId === null) {
+            // If some fingers remain and no winner yet, reset timer for remaining badges
+            resetSelectionTimer();
+        }
+        // drawAllBadges(); // Redraw after removing badges - handled by animation loop
+    }
+
+    // Phase 2: Fading and Pulsing animations + Background change + Winner Text
+    function fadeOutLosers() {
+        activeBadges.forEach(badge => {
+            if (badge.id !== winnerId) {
+                badge.alpha = 0.2; // Fade to very translucent
+                badge.timerProgress = 0; // Hide timer progress for losers
+            } else {
+                badge.timerProgress = 0; // Also hide for winner as selection is made
+            }
+        });
+        // Background color fades to a muted version of the winner's color
+        if (winnerBaseColor) {
+            const matches = winnerBaseColor.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
+            if (matches) {
+                const h = parseInt(matches[1]);
+                const s = parseInt(matches[2]);
+                // Make it less vibrant for the background: lower saturation, adjust lightness
+                body.style.backgroundColor = `hsl(${h}, ${s * 0.4}%, ${25}%)`; // Darker, less saturated
+            }
+        }
+        drawAllBadges(); // Redraw with new opacities and hidden timers
+    }
+
+    function pulseWinner() {
+        const winnerBadge = activeBadges.get(winnerId);
+        if (!winnerBadge) return;
+
+        let scale = 1;
+        let growing = true;
+        const pulseDuration = 150; // ms for one pulse phase (grow or shrink)
+        const numPulses = 3; // Total number of full pulses (grow + shrink)
+        let pulseCount = 0;
+
+        // Enhanced: Winner animation with spiral particle effect
+        winnerBadge.rotation = 0; // Reset rotation
+        triggerParticleExplosion(winnerBadge.x, winnerBadge.y, winnerBadge.baseColor); // Trigger explosion
+
+        function animatePulse() {
+            if (growing) {
+                scale += 0.05; // Speed of growth
+                if (scale >= 1.5) growing = false;
+            } else {
+                scale -= 0.05; // Speed of shrink
+                if (scale <= 1) {
+                    growing = true;
+                    pulseCount++;
+                }
+            }
+            winnerBadge.scale = scale;
+            // winnerBadge.rotation += 0.1; // Gentle rotation during pulse (optional)
+
+            // Redraw all badges (winner will be scaled, losers faded)
+            // drawAllBadges(); // This is now handled by the main animation loop if activeBadges > 0
+
+            if (pulseCount < numPulses) {
+                setTimeout(animatePulse, pulseDuration / 10); // Adjust timing for smoother/faster pulse
+            } else {
+                winnerBadge.scale = 1; // Reset scale after pulsing
+                isSelecting = false; // Selection process is complete
+                // drawAllBadges(); // Final draw after animation
+            }
+        }
+        animatePulse(); // Start the pulsing animation
+    }
+
+    // Phase 2: Reset game state
+    function resetGame() {
+        // Clear winner and selection state
+        winnerId = null;
+        isSelecting = false;
+        winnerBaseColor = null; // Reset winner base color
+
+        // Clear all active badges
+        activeBadges.clear();
+
+        // Stop any ongoing animations or timers
+        if (selectionTimer) {
+            clearTimeout(selectionTimer);
+            selectionTimer = null;
+        }
+        if (visualCountdownLoopId) {
+            cancelAnimationFrame(visualCountdownLoopId);
+            visualCountdownLoopId = null;
+        }
+        if (particleAnimationId) { // Stop particle/confetti animations
+            cancelAnimationFrame(particleAnimationId);
+            particleAnimationId = null;
+        }
+        explosionParticles = []; // Clear any remaining particles
+        confettiParticles = []; // Clear confetti
+
+        // Reset background color to dark mode default
+        body.style.backgroundColor = '#000000';
+
+        // Hide winner text
+        hideWinnerText();
+
+        // Show instructions if they were hidden
+        if (!instructionsVisible) {
+            instr.classList.remove('hidden');
+            instructionsVisible = true;
+        }
+
+        drawAllBadges(); // Clear canvas and redraw (should be empty)
+    }
+
+    // 5. Drawing functions (Phase 1, 2, 3 updates)
+    function drawAllBadges() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear canvas for fresh draw
+
+        activeBadges.forEach(badge => {
+            // New: Draw trail first, so circles are on top
+            if (badge.trail.length > 0) {
+                ctx.beginPath();
+                ctx.moveTo(badge.trail[0].x, badge.trail[0].y);
+                for (let i = 1; i < badge.trail.length; i++) {
+                    const point = badge.trail[i];
+                    // Use a quadratic curve for smoother trails, using midpoints
+                    const prevPoint = badge.trail[i-1];
+                    const midX = (prevPoint.x + point.x) / 2;
+                    const midY = (prevPoint.y + point.y) / 2;
+                    if (i === 1) { // For the first segment, lineTo the first midPoint
+                        ctx.lineTo(midX, midY);
+                    } else {
+                        ctx.quadraticCurveTo(prevPoint.x, prevPoint.y, midX, midY);
+                    }
+                }
+                // Line to the last actual point in the trail for current segment
+                // ctx.lineTo(badge.trail[badge.trail.length - 1].x, badge.trail[badge.trail.length - 1].y);
+
+
+                const trailColorMatch = badge.baseColor.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
+                if (trailColorMatch) {
+                    const h = parseInt(trailColorMatch[1]);
+                    const s = parseInt(trailColorMatch[2]);
+                    const l = parseInt(trailColorMatch[3]);
+                    // Create a gradient for the trail for a fading effect
+                    const gradient = ctx.createLinearGradient(badge.trail[0].x, badge.trail[0].y, badge.x, badge.y);
+                    gradient.addColorStop(0, `hsla(${h}, ${s}%, ${l}%, 0)`); // Start transparent
+                    gradient.addColorStop(0.7, `hsla(${h}, ${s}%, ${l}%, ${badge.alpha * 0.3})`); // Mid-point semi-transparent
+                    gradient.addColorStop(1, `hsla(${h}, ${s}%, ${l}%, ${badge.alpha * 0.6})`); // End more opaque
+
+
+                    ctx.strokeStyle = gradient;
+                    // ctx.strokeStyle = `hsla(${h}, ${s}%, ${l}%, ${badge.alpha * 0.4})`; // Trail color slightly less opaque
+                } else {
+                    ctx.strokeStyle = `rgba(255, 255, 255, ${badge.alpha * 0.4})`; // Fallback trail color
+                }
+                ctx.lineWidth = 10 * badge.scale; // Trail thickness scales with badge
+                ctx.lineCap = "round"; // Smooth line caps
+                ctx.lineJoin = "round"; // Smooth line joins
+                ctx.stroke();
+            }
+
+
+            // Main badge drawing logic (concentric circles)
+            const radius = 40 * badge.scale; // Base radius, affected by pulse
+            ctx.save(); // Save context for rotation/alpha changes
+            ctx.translate(badge.x, badge.y); // Move to badge center for rotation
+            ctx.rotate(badge.rotation); // Apply rotation if any
+
+            // Outer circle (softer)
+            ctx.beginPath();
+            ctx.fillStyle = badge.outerColor; // Use dynamic color with alpha
+            ctx.arc(0, 0, radius, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Inner circle (more saturated)
+            ctx.beginPath();
+            ctx.fillStyle = badge.innerColor; // Use dynamic color with alpha
+            ctx.arc(0, 0, radius * 0.7, 0, Math.PI * 2); // Inner circle is 70% of outer
+            ctx.fill();
+
+            // Optional: Thin ring for definition
+            ctx.beginPath();
+            ctx.strokeStyle = badge.ringColor; // Use dynamic color with alpha
+            ctx.lineWidth = 2 * badge.scale;
+            ctx.arc(0, 0, radius, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // New: Visual Countdown Timer (Circular)
+            if (badge.timerProgress > 0 && badge.id !== winnerId) { // Only show if timer is active and not the winner
+                ctx.beginPath();
+                // Start from the top (-90 degrees or -PI/2)
+                const startAngle = -Math.PI / 2;
+                // End angle is calculated based on progress. Full circle is 2*PI.
+                const endAngle = startAngle + (badge.timerProgress * Math.PI * 2);
+
+                ctx.strokeStyle = badge.baseColor; // Use base color for timer arc
+                ctx.lineWidth = 5 * badge.scale; // Thicker line for visibility
+                ctx.arc(0, 0, radius + 5 * badge.scale, startAngle, endAngle, false); // Draw counter-clockwise
+                ctx.stroke();
+            }
+            ctx.restore(); // Restore context after drawing rotated/alpha-modified badge
+        });
+    }
+
+    console.log("Attaching touch listeners...");
+    canvas.style.border = '5px solid green';
+    // 6. Event listeners for touch
+    //    (passive: false allows us to prevent default actions like scrolling)
+    canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+    canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+    canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
+    canvas.addEventListener('touchcancel', handleTouchEnd, { passive: false }); // Treat cancel same as end
+
+    // 7. Animation Loop (Phase 1, 2, 3 updates)
+    // This loop will now manage drawing changes for trails, pulses, etc.
+    function animationLoop(currentTime) {
+        // Update badge trails (decay alpha or remove old points) even if not moving
+        activeBadges.forEach(badge => {
+            if (badge.trail.length > 0) {
+                badge.trail.forEach(p => p.alpha *= 0.95); // Fade out trail points
+                badge.trail = badge.trail.filter(p => p.alpha > 0.01); // Remove fully faded points
+            }
+        });
+
+        // Only redraw if there are active badges or particles
+        if (activeBadges.size > 0 || explosionParticles.length > 0 || confettiParticles.length > 0) {
+            // If particles/confetti are active, their own animation loop handles drawing.
+            // Otherwise, if only badges are active, draw them.
+            if (explosionParticles.length === 0 && confettiParticles.length === 0) {
+                 drawAllBadges();
+            }
+        } else if (winnerId === null && !instructionsVisible) {
+            // If no activity and instructions are hidden (e.g. after all touches lifted before selection)
+            // ensure canvas is clear. If resetGame was called, it handles this.
+            // If not, and it's just an empty state, this ensures no stale drawing.
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+
+        requestAnimationFrame(animationLoop); // Keep the loop going
+    }
+    requestAnimationFrame(animationLoop); // Start the main animation loop
+  </script>
+</body>
+</html>
